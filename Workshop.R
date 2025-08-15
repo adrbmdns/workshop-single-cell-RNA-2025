@@ -139,3 +139,106 @@ merged <- NormalizeData(merged, assay = "RNA",
 
 # scale data
 merged <- ScaleData(merged, verbose = TRUE)
+
+################## workshop 3 ########################
+merged <- FindVariableFeatures(merged,
+                               assay = "RNA",
+                               nfeatures = 2000,
+                               mean.cutoff = c(0.1, 8),
+                               dispersion.cutoff = c(1, Inf))
+
+top10 <- head(VariableFeatures(merged), 10)
+
+VariableFeaturePlot(object = merged)
+
+HoverLocator(VariableFeaturePlot(object = merged))
+
+# PCA
+merged <- RunPCA(merged, npcs = 50, assay = "RNA")
+
+# Create elbow plot
+elbow <- ElbowPlot(merged, ndims = 30)
+jpeg("figures/Elbow.jpg", width = 8, height = 6, units = 'in', res = 150)
+print(elbow)
+dev.off()
+
+# create heatmap
+DimHeatmap(merged, dims = 1, cells = 500, nfeatures = 30,
+           balanced = TRUE, fast = FALSE)
+
+# PC 1 to 12
+jpeg("figures/DimHm1_12.jpg", width = 10, height = 20,
+     units = 'in', res = 150)
+DimHeatmap(merged, dims = 1:12, balanced = TRUE, cells = 500)
+dev.off()
+
+# PC 13 to 24
+jpeg("figures/DimHm13_24.jpg", width = 10, height = 20,
+     units = 'in', res = 150)
+DimHeatmap(merged, dims = 13:24, balanced = TRUE, cells = 500)
+dev.off()
+
+# PC 25 to 36
+jpeg("figures/DimHm25_36.jpg", width = 10, height = 20,
+     units = 'in', res = 150)
+DimHeatmap(merged, dims = 25:36, balanced = TRUE, cells = 500)
+dev.off()
+
+# access SD values
+length(which(merged@reductions$pca@stdev > 2))
+
+# cell clustering
+PC <- 22
+merged <- FindNeighbors(merged, dims = 1:PC)
+merged <- FindClusters(merged, resolution = 1.2,
+                       cluster.name = "seurat_clusters_res1.2")
+
+# Run UMAP
+merged <- RunUMAP(merged, dims = 1:PC)
+jpeg("figures/UMAP.jpg", width = 5, height = 4,
+     units = "in", res = 150)
+DimPlot(merged, label = TRUE, group.by = 'seurat_clusters_res1.2')
+dev.off()
+
+# color cells by sample
+
+jpeg("figures/UMAP_by_sample.jpg", width = 5, height = 4, units = 'in',
+     res = 150)
+DimPlot(merged, label = FALSE, group.by = "orig.ident")
+dev.off()
+
+# color by one sample
+highlighted_cells <- WhichCells(merged, expression = orig.ident == "Rep1_ICBdT")
+DimPlot(merged, group.by = 'orig.ident', cells.highlight = highlighted_cells)
+
+# compare resolution
+merged <- FindClusters(merged, resolution = 0.8,
+                       cluster.name = 'seurat_clusters_res0.8')
+merged <- FindClusters(merged, resolution = 0.5,
+                       cluster.name = 'seurat_clusters_res0.5')
+
+# visualisation of different res
+jpeg("figures/UMAP_compare_res.jpg", width = 20, height = 5, units = "in",
+     res = 150)
+DimPlot(merged, label = TRUE, group.by = 'seurat_clusters_res0.5') +
+  DimPlot(merged, label = TRUE, group.by = 'seurat_clusters_res0.8') +
+  DimPlot(merged, label = TRUE, group.by = 'seurat_clusters_res1.2')
+dev.off()
+
+# cell cycle scoring
+library(gprofiler2)
+
+s.genes <- gorth(cc.genes.updated.2019$s.genes, source_organism = 'hsapiens',
+                 target_organism = 'mmusculus')$ortholog_name
+g2m.genes <- gorth(cc.genes.updated.2019$g2m.genes, source_organism = 'hsapiens',
+                   target_organism = 'mmusculus')$ortholog_name
+
+merged <- CellCycleScoring(object = merged, s.features = s.genes,
+                           g2m.features = g2m.genes)
+
+FeaturePlot(merged, features = c("S.Score", "G2M.Score")) +
+  DimPlot(merged, group.by = "Phase")
+
+# save Seurat object
+saveRDS(merged, file = "rep135_clustered.rds")
+
