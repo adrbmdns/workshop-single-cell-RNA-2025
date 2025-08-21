@@ -242,3 +242,56 @@ FeaturePlot(merged, features = c("S.Score", "G2M.Score")) +
 # save Seurat object
 saveRDS(merged, file = "rep135_clustered.rds")
 
+################# Workshop 4 #####################
+library(SingleR)
+library(celldex)
+library(Seurat)
+library(cowplot)
+
+merged <- readRDS("rep135_clustered.rds")
+ref_immgen <- ImmGenData()
+
+# predict cell type with main labels
+predictions_main <- SingleR(test = GetAssayData(merged),
+                            ref = ref_immgen,
+                            labels = ref_immgen$label.main)
+
+predictions_fine <- SingleR(test = GetAssayData(merged),
+                            ref = ref_immgen,
+                            labels = ref_immgen$label.fine)
+
+# plot delta distribution
+plotDeltaDistribution(predictions_main)
+plotDeltaDistribution(predictions_fine)
+plotScoreHeatmap(predictions_main)
+
+# add labels to Seurat metadata table
+merged[["immgen_singler_main"]] <- rep('NA', ncol(merged))
+merged$immgen_singler_main[rownames(predictions_main)] <-
+  predictions_main$labels
+
+merged[["immgen_singler_fine"]] <- rep('NA', ncol(merged))
+merged$immgen_singler_fine[rownames(predictions_fine)] <-
+  predictions_fine$labels
+
+# visualise cell type composition within sample
+library(viridis)
+library(ggplot2)
+
+ggplot(merged[[]], aes(x = orig.ident, fill = immgen_singler_main)) +
+  geom_bar(position = "fill") +
+  scale_fill_viridis(discrete = TRUE)
+
+ggplot(merged[[]], aes(x = immgen_singler_main, fill = orig.ident)) +
+  geom_bar(position = "fill") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+  scale_fill_viridis(discrete = TRUE)
+
+# map cell annotation to cluster
+DimPlot(merged, group.by = c("immgen_singler_fine"), label = TRUE)
+
+# use a different reference
+ref_mouserna <- celldex::MouseRNAseqData()
+
+# save file
+saveRDS(merged, file = "preprocessed_object.rds")
