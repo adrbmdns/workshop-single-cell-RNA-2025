@@ -295,3 +295,177 @@ ref_mouserna <- celldex::MouseRNAseqData()
 
 # save file
 saveRDS(merged, file = "preprocessed_object.rds")
+
+##################### Workshop 5 ########################
+library(Seurat)
+library(dplyr)
+library(EnhancedVolcano)
+library(presto)
+
+merged <- readRDS("preprocessed_object.rds")
+
+# view cells with Epcam expression
+FeaturePlot(merged, features = "Epcam")
+
+# view clusters together
+DimPlot(merged, group.by = "seurat_clusters_res0.8", label = TRUE) +
+  FeaturePlot(merged, features = "Epcam") +
+  DimPlot(merged, group.by = "immgen_singler_main")
+
+# create a violin plot to visualise which cluster express Epcam
+VlnPlot(merged, group.by = "seurat_clusters_res0.8", features = "Epcam")
+
+# subset the Seurat object to only include clusters 8 and 13
+merged <- SetIdent(merged, value = "seurat_clusters_res0.8")
+merged_epithelial <- subset(merged, idents = c("8", "13"))
+
+# plot the original and subset side-by-side
+DimPlot(merged, group.by = "seurat_clusters_res0.8", label = TRUE) +
+  DimPlot(merged_epithelial, group.by = "seurat_clusters_res0.8", label = TRUE)
+
+# count the number of cells
+table(merged$seurat_clusters_res0.8)
+table(merged_epithelial$seurat_clusters_res0.8)
+
+# find differential expressed genes in these clusters
+merged_epithelial <- SetIdent(merged_epithelial, value = "seurat_clusters_res0.8")
+epithelial_de <- FindMarkers(merged_epithelial, ident.1 = "8", ident.2 = "13",
+                             min.pct = 0.25, logfc.threshold = 0.1)
+
+# subset DE table with genes have a p-value less than 0.001
+epithelial_de_sig <- epithelial_de[epithelial_de$p_val_adj < 0.001,]
+epithelial_de_sig_top20 <- epithelial_de_sig |> top_n(n=20, wt=abs(avg_log2FC))
+
+# get the top 20 gene names
+epithelial_de_sig_top20_genes <- rownames(epithelial_de_sig_top20)
+VlnPlot(merged_epithelial, features = epithelial_de_sig_top20_genes,
+        group.by = "seurat_clusters_res0.8", ncol=5, pt.size=0)
+
+# plot top 20 genes on UMAP
+FeaturePlot(merged_epithelial, features = epithelial_de_sig_top20_genes, ncol=5)
+
+# plot top 20 genes on a Dot Plot
+DotPlot(merged_epithelial, features = epithelial_de_sig_top20_genes,
+        group.by = "seurat_clusters_res0.8") +
+  RotatedAxis()
+
+# enhanced volcano
+EnhancedVolcano(epithelial_de, lab = rownames(epithelial_de), x = "avg_log2FC",
+                y = "p_val_adj", title = "Cluster 8 wrt 13", pCutoff = 0.05,
+                FCcutoff = 0.5, pointSize = 3, labSize = 5, colAlpha = 0.3)
+
+# re-run FindMarkers
+epithelial_de_gsea <- FindMarkers(merged_epithelial, ident.1 = "8", ident.2 = "13",
+                                  min.pct = 0.25, logfc.threshold = 0)
+epithelial_de_gsea <- tibble::rownames_to_column(epithelial_de_gsea, var = "gene")
+write.table(x = epithelial_de_gsea, file = "epithelial_de_all.tsv", sep = "\t",
+            row.names = FALSE)
+
+############### Pseudobulk DE Analysis ##################
+pb_epithelial <- AggregateExpression(merged_epithelial, assays = 'RNA',
+                                     return.seurat = TRUE,
+                                     group.by = c('orig.ident',
+                                                  'seurat_clusters_res0.8'))
+
+# Have a look of the log-normalised table
+pb_epithelial[['RNA']]$data
+
+# change Ident to seurat clusters
+Idents(pb_epithelial) <- "seurat_clusters_res0.8"
+
+# find marker genes for comparing cluster 8 and 13
+pb_epithelial_de <- FindMarkers(object = pb_epithelial, test.use = "DESeq2",
+                                ident.1 = "8", ident.2 = "13")
+
+# remove NA values
+pb_epithelial_de <- na.omit(pb_epithelial_de)
+
+# significant genes
+pb_epithelial_de_sig <- pb_epithelial_de[pb_epithelial_de$p_val_adj < 0.001, ]
+
+# compare result between single-cell and pseudobulk
+# significant genes both present in single-cell and pseudobulk DE analysis
+pb_and_sc_genes <- intersect(rownames(epithelial_de_sig),
+                             rownames(pb_epithelial_de_sig))
+
+# genes only significant in single-cell DE
+only_sc_genes <- setdiff(rownames(epithelial_de_sig),
+                         rownames(pb_epithelial_de_sig))
+
+# genes only significant in pseudobulk DE
+only_pb_genes <- setdiff(rownames(pb_epithelial_de_sig),
+                         rownames(epithelial_de_sig))
+
+################## DE Analysis on T cells ####################
+# check all annotation types
+unique(merged$immgen_singler_main)
+t_celltypes_names <- c("T cells", "NKT", "Tgd")
+
+# subset T cells
+merged <- SetIdent(merged, value = "immgen_singler_main")
+merged_tcells <- subset(merged, idents = t_celltypes_names)
+
+# confirm the subset is correct
+DimPlot(merged, group.by = "immgen_singler_main") +
+  DimPlot(merged_tcells, group.by = "immgen_singler_main")
+
+# create a new column in metadata table to store conditions
+merged_tcells@meta.data$experimental_condition <- NA
+merged_tcells@meta.data$experimental_condition[
+  merged_tcells@meta.data$orig.ident %in% c("Rep1_ICB", "Rep3_ICB", "Rep5_ICB")
+] <- "ICB"
+merged_tcells@meta.data$experimental_condition[
+  merged_tcells@meta.data$orig.ident %in% c("Rep1_ICBdT", "Rep3_ICBdT", "Rep5_ICBdT")
+] <- "ICBdT"
+
+# DE analysis between two groups
+merged_tcells <- SetIdent(merged_tcells, value = "experimental_condition")
+tcells_de <- FindMarkers(merged_tcells, ident.1 = "ICBdT", ident.2 = "ICB")
+tcells_de_sig <- tcells_de[tcells_de$p_val_adj < 0.001, ]
+tcells_de_sig |> top_n(n=5, wt=-avg_log2FC)
+tcells_de_sig |> top_n(n=5, wt=avg_log2FC)
+
+# inspect expression patterns for CD8/4 genes
+VlnPlot(merged_tcells, features = c("Cd8a", "Cd8b1", "Cd4"))
+merged_cd8tcells <- subset(merged_tcells, subset = Cd8b1>1 & Cd8a>1 & Cd4<0.1)
+
+merged_cd8tcells <- SetIdent(merged_cd8tcells, value = "experimental_condition")
+cd8tcells_de <- FindMarkers(merged_cd8tcells, ident.1 = "ICBdT", ident.2 = "ICB",
+                            min.pct = 0.25)
+
+cd8tcells_de_sig <- cd8tcells_de[cd8tcells_de$p_val_adj < 0.001, ]
+
+cd8tcells_de_sig_top20 <- cd8tcells_de_sig |> top_n(n=20, wt=abs(avg_log2FC))
+cd8tcells_de_sig_top20_genes <- rownames(cd8tcells_de_sig_top20)
+
+# compare top 20 genes
+VlnPlot(merged_cd8tcells, features = cd8tcells_de_sig_top20_genes[1:10],
+        group.by = "experimental_condition", ncol=5, pt.size=0)
+VlnPlot(merged_cd8tcells, features = cd8tcells_de_sig_top20_genes[11:20],
+        group.by = "experimental_condition", ncol=5, pt.size=0)
+
+FeaturePlot(merged_cd8tcells, features = cd8tcells_de_sig_top20_genes[1:10],
+            ncol=5)
+FeaturePlot(merged_cd8tcells, features = cd8tcells_de_sig_top20_genes[11:20],
+            ncol=5)
+
+DotPlot(merged_cd8tcells, features = cd8tcells_de_sig_top20_genes,
+        group.by = "experimental_condition") + RotatedAxis()
+
+EnhancedVolcano(cd8tcells_de, lab=rownames(cd8tcells_de), x='avg_log2FC',
+                y='p_val_adj', title="ICBdT wrt ICB", pCutoff=0.05,
+                FCcutoff = 0.5, pointSize = 3, labSize = 5, colAlpha = 0.3)
+
+# save DE result to TSV files
+cd8tcells_de_gsea <- FindMarkers(merged_cd8tcells, ident.1 = "ICBdT",
+                                 ident.2 = "ICB", min.pct=0.25,
+                                 logfc.threshold=0)
+cd8tcells_de_gsea <- tibble::rownames_to_column(cd8tcells_de_gsea, var="gene")
+write.table(cd8tcells_de_gsea, file="cd8tcells_de_gsea.tsv", sep='\t',
+            row.names = FALSE)
+
+
+
+
+
+
